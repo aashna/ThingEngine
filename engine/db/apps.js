@@ -203,6 +203,10 @@ module.exports = new lang.Class({
         return apps;
     },
 
+    getApp: function() {
+        return this._apps[id];
+    },
+
     getSharedApp: function(id) {
         if (!(id in this._sharedApps))
             throw new Error(id + ' is not a shared app');
