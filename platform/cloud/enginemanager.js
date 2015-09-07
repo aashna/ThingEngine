@@ -11,6 +11,8 @@ const lang = require('lang');
 const child_process = require('child_process');
 const path = require('path');
 const fs = require('fs');
+const net = require('net');
+const url = require('url');
 
 const user = require('./model/user');
 const db = require('./util/db');
@@ -55,8 +57,10 @@ const EngineManager = new lang.Class({
                 fs.close(stdout);
                 fs.close(stderr);
 
+                var closed = false;
                 child.on('error', function(error) {
                     console.error('Child with ID ' + userId + ' reported an error: ' + error);
+                    closed = true;
                 });
                 child.on('exit', function(code, signal) {
                     if (code !== 0)
@@ -67,16 +71,33 @@ const EngineManager = new lang.Class({
                 runningProcesses[userId] = child;
 
                 frontend.registerWebSocketEndpoint('/ws/' + cloudId, function(req, socket, head) {
-                    var saneReq = {
-                        httpVersion: req.httpVersion,
-                        url: req.url,
-                        headers: req.headers,
-                        rawHeaders: req.rawHeaders,
-                        method: req.method,
-                    };
-                    var encodedReq = new Buffer(JSON.stringify(saneReq)).toString('base64');
-                    child.send({type:'websocket', request: encodedReq,
-                                upgradeHead: head.toString('base64')}, socket);
+                    if (closed)
+                        return 500; // Internal Server Error
+
+                    // Note: both sockets must have allowHalfOpen: true for this to work
+                    // (this is true of sockets created by http.createServer() and
+                    // https.createServer())
+                    var pipe = net.Socket({ allowHalfOpen: true });
+                    pipe.connect('./' + cloudId + '/websocket');
+                    // Write the headers again
+                    var parsed = url.parse(req.url);
+                    pipe.write('UPGRADE ' + parsed.path + ' HTTP/' + req.httpVersion + '\r\n');
+                    for (var header in req.rawHeaders)
+                        pipe.write(header + ': ' + req.rawHeaders[header] + '\r\n');
+                    pipe.write('\r\n');
+                    pipe.write(head);
+                    // .pipe() is a badly named splice(2)
+                    // note that encryption/decryption happens here, as we
+                    // pump the data from socket into pipe, and pump the
+                    // data from pipe into socket
+                    socket.pipe(pipe);
+                    pipe.pipe(socket);
+
+                    // Note: 101 is a sentinel value that the frontend need not send a HTTP
+                    // response. It does not mean we actually sent 101 (ie, completed the handshake)
+                    // but the WebSocketServer code in the engine will take care of that
+                    // Or that kill the connection
+                    return 101; // Switching Protocols
                 });
             });
     },

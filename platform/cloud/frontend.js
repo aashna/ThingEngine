@@ -74,7 +74,13 @@ Frontend.prototype.open = function() {
             return;
         }
 
-        endpoint(req, socket, head);
+        var res = endpoint(req, socket, head);
+        if (res !== 101) {
+            socket.write('HTTP/1.1 ' + res + ' ' + http.STATUS_CODES[res] + '\r\n');
+            socket.write('Content-type: text/plain;charset=utf8;\r\n');
+            socket.write('\r\n\r\n');
+            socket.end('Generic error');
+        }
     }.bind(this));
     this.server = server;
 
